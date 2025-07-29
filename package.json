@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node --max-old-space-size=100 --gc-interval=100 --optimize-for-size --no-compilation-cache --turbo-fast-api-calls src/server-uws.js",
-    "worker": "node --max-old-space-size=80 --gc-interval=50 --optimize-for-size --turbo-fast-api-calls src/workers/paymentProcessorWorker-optimized.js",
+    "start": "node --max-old-space-size=70 --no-compilation-cache --turbo-fast-api-calls --optimize-for-size src/server-uws.js",
+    "worker": "node --max-old-space-size=100 --turbo-fast-api-calls --optimize-for-size src/workers/paymentProcessorWorker-optimized.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {

@@ -8,12 +8,12 @@ services:
       - redis
     environment:
       - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=32
+      - UV_THREADPOOL_SIZE=16
     deploy:
       resources:
         limits:
-          cpus: "0.35"
-          memory: "85MB"
+          cpus: "0.4"
+          memory: "80MB"
     networks:
       - payment-processor
 
@@ -25,12 +25,12 @@ services:
       - redis
     environment:
       - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=32
+      - UV_THREADPOOL_SIZE=16
     deploy:
       resources:
         limits:
-          cpus: "0.35"
-          memory: "85MB"
+          cpus: "0.4"
+          memory: "80MB"
     networks:
       - payment-processor
 
@@ -42,12 +42,12 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=32
+      - UV_THREADPOOL_SIZE=8
     deploy:
       resources:
         limits:
-          cpus: "0.35"
-          memory: "75MB"
+          cpus: "0.4"
+          memory: "120MB"
     networks:
       - payment-processor
 
@@ -62,14 +62,18 @@ services:
       "--maxmemory-policy", "allkeys-lru",
       "--tcp-keepalive", "60",
       "--timeout", "0",
-      "--io-threads", "2",
-      "--io-threads-do-reads", "yes"
+      "--io-threads", "4",
+      "--io-threads-do-reads", "yes",
+      "--lazyfree-lazy-eviction", "yes",
+      "--lazyfree-lazy-expire", "yes",
+      "--lazyfree-lazy-server-del", "yes",
+      "--replica-lazy-flush", "yes"
     ]
     deploy:
       resources:
         limits:
-          cpus: "0.2"
-          memory: "40MB"
+          cpus: "0.15"
+          memory: "35MB"
     networks:
       - payment-processor
 

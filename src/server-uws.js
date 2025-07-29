@@ -60,18 +60,24 @@ const app = uWS.App({
           // Adiciona ao cache
           requestCache.set(cacheKey, { timestamp: Date.now() });
           
-          res.writeStatus('201').writeHeader('Content-Type', 'application/json');
-          res.end('{"message":"Payment queued"}');
+          res.cork(() => {
+            res.writeStatus('201').writeHeader('Content-Type', 'application/json');
+            res.end('{"message":"Payment queued"}');
+          });
         }).catch(() => {
           if (res.aborted) return;
-          res.writeStatus('500').writeHeader('Content-Type', 'application/json');
-          res.end('{"error":"Internal Server Error"}');
+          res.cork(() => {
+            res.writeStatus('500').writeHeader('Content-Type', 'application/json');
+            res.end('{"error":"Internal Server Error"}');
+          });
         });
         
       } catch (err) {
         if (res.aborted) return;
-        res.writeStatus('400').writeHeader('Content-Type', 'application/json');
-        res.end('{"error":"Invalid JSON"}');
+        res.cork(() => {
+          res.writeStatus('400').writeHeader('Content-Type', 'application/json');
+          res.end('{"error":"Invalid JSON"}');
+        });
       }
     }
   });
@@ -89,17 +95,23 @@ const app = uWS.App({
     
     if (res.aborted) return;
     
-    res.writeStatus('200').writeHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify(summary));
+    res.cork(() => {
+      res.writeStatus('200').writeHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(summary));
+    });
   } catch (err) {
     if (res.aborted) return;
-    res.writeStatus('500').writeHeader('Content-Type', 'application/json');
-    res.end('{"error":"Internal Server Error"}');
+    res.cork(() => {
+      res.writeStatus('500').writeHeader('Content-Type', 'application/json');
+      res.end('{"error":"Internal Server Error"}');
+    });
   }
 
 }).any('/*', (res, req) => {
-  res.writeStatus('404').writeHeader('Content-Type', 'application/json');
-  res.end('{"error":"Not Found"}');
+  res.cork(() => {
+    res.writeStatus('404').writeHeader('Content-Type', 'application/json');
+    res.end('{"error":"Not Found"}');
+  });
 
 }).listen(PORT, (token) => {
   if (token) {

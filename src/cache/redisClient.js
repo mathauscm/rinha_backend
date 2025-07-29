@@ -17,11 +17,11 @@ const redis = new Redis({
   maxLoadingTimeout: 1000,
   
   // Network otimizations
-  connectTimeout: 1000,
-  commandTimeout: 500,
+  connectTimeout: 2000,
+  commandTimeout: 2000,
   
   // Disable unnecessary features for speed
-  enableOfflineQueue: false,
+  enableOfflineQueue: true,
   enableAutoPipelining: true,
   
   // Connection pool settings

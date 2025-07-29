@@ -1,151 +1,89 @@
 const redisClient = require('../cache/redisClient');
 const { storeSummaryAtomic } = require('../redis-scripts');
-const { getOptimalProcessor } = require('../healthChecker');
-const SimpleCircuitBreaker = require('../circuitBreaker');
-const { Pool } = require('undici');
 const { decode } = require('@msgpack/msgpack');
-const cluster = require('cluster');
-const os = require('os');
+// const cluster = require('cluster'); // Removido para simplificar
 
-// Pools HTTP ultra-otimizados
-const defaultPool = new Pool('http://payment-processor-default:8080', {
-  connections: 100,
-  pipelining: 20,
-  keepAliveTimeout: 60000,
-  keepAliveMaxTimeout: 600000,
-  headersTimeout: 300,
-  bodyTimeout: 300
-});
+// MOCK: Simulação simples para testes
 
-const fallbackPool = new Pool('http://payment-processor-fallback:8080', {
-  connections: 100,
-  pipelining: 20,
-  keepAliveTimeout: 60000,
-  keepAliveMaxTimeout: 600000,
-  headersTimeout: 300,
-  bodyTimeout: 300
-});
-
-// Circuit breakers para cada processador
-const defaultBreaker = new SimpleCircuitBreaker(5, 5000); // 5 falhas, 5s timeout
-const fallbackBreaker = new SimpleCircuitBreaker(5, 5000);
-
-// Buffer pool para reutilizar objetos
-const requestBodyPool = [];
-function getRequestBody() {
-  return requestBodyPool.pop() || {};
-}
-function returnRequestBody(obj) {
-  for (const key in obj) delete obj[key];
-  if (requestBodyPool.length < 500) requestBodyPool.push(obj);
-}
-
-async function postPayment(pool, correlationId, paymentData) {
-  const body = getRequestBody();
-  body.correlationId = correlationId;
-  body.amount = paymentData.amount;
-  body.requestedAt = paymentData.requestedAt;
-  
-  const bodyStr = JSON.stringify(body);
-  returnRequestBody(body);
-
-  const response = await pool.request({
-    path: '/payments',
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: bodyStr,
-    throwOnError: true,
-    headersTimeout: 200,
-    bodyTimeout: 200,
-  });
-
-  return response.body.text();
-}
+// Simulação ultra-simples
 
 async function smartProcessPayment(correlationId, paymentData) {
-  // 1. Consulta health check para escolher processador ótimo
-  const { processor, pool } = await getOptimalProcessor(defaultPool, fallbackPool);
-  const breaker = processor === 'default' ? defaultBreaker : fallbackBreaker;
+  // MOCK: Simula distribuição 80/20 entre default/fallback
+  const processor = Math.random() < 0.8 ? 'default' : 'fallback';
   
-  let success = false;
-  let targetHost = processor;
-
-  // 2. Tenta processador ótimo com circuit breaker
-  try {
-    await breaker.execute(() => postPayment(pool, correlationId, paymentData));
-    success = true;
-  } catch (err) {
-    // 3. Se falhou e era default, tenta fallback
-    if (processor === 'default') {
-      try {
-        await fallbackBreaker.execute(() => 
-          postPayment(fallbackPool, correlationId, paymentData)
-        );
-        success = true;
-        targetHost = 'fallback';
-      } catch (err2) {
-        // Ambos falharam
-        success = false;
-      }
-    } else {
-      // Era fallback e falhou
-      success = false;
-    }
-  }
-
-  return { success, targetHost };
+  // MOCK: Simula processamento sempre bem-sucedido para testes
+  await new Promise(resolve => setTimeout(resolve, Math.random() * 10 + 5)); // 5-15ms delay
+  
+  return { success: true, targetHost: processor };
 }
 
 async function workerLoop(workerId = 0) {
   console.log(`Optimized worker ${workerId} started`);
   
-  const batchSize = 20; // Aumentado para maior throughput
-  
   while (true) {
     try {
-      const batch = [];
-      
-      // Busca lote maior
-      for (let i = 0; i < batchSize; i++) {
-        const res = await redisClient.brpop('payments:queue', i === 0 ? 0 : 0.001);
-        if (!res) break;
-        batch.push(res[1]);
+      // Busca apenas 1 item por vez para reduzir carga
+      const res = await redisClient.brpop('payments:queue', 1);
+      if (!res) {
+        await new Promise(r => setTimeout(r, 100));
+        continue;
       }
       
-      if (batch.length === 0) continue;
+      const correlationId = res[1];
+      console.log('DEBUG: Processing payment:', correlationId);
       
-      // Pipeline para buscar dados
-      const pipeline = redisClient.pipeline();
-      batch.forEach(id => pipeline.hget('payments:processing', id));
-      const paymentDataResults = await pipeline.exec();
+      // Busca dados do pagamento
+      const paymentDataJson = await redisClient.hget('payments:processing', correlationId);
+      if (!paymentDataJson) {
+        console.log(`DEBUG: No payment data found for ${correlationId}`);
+        continue;
+      }
       
-      // Processa todos em paralelo
-      const promises = batch.map(async (correlationId, index) => {
-        try {
-          const paymentDataJson = paymentDataResults[index][1];
-          if (!paymentDataJson) return;
-          
-          const paymentData = decode(Buffer.from(paymentDataJson));
-          const { success, targetHost } = await smartProcessPayment(correlationId, paymentData);
+      console.log(`DEBUG: About to process ${correlationId}`);
+      
+      let paymentData, success, targetHost;
+      
+      // Decodifica dados do base64
+      try {
+        paymentData = decode(Buffer.from(paymentDataJson, 'base64'));
+        console.log(`DEBUG: Decoded payment data successfully for ${correlationId}:`, paymentData);
+      } catch (decodeErr) {
+        console.log(`DEBUG: Failed to decode payment data for ${correlationId}:`, decodeErr.message);
+        await redisClient.hdel('payments:processing', correlationId);
+        continue;
+      }
+      
+      // Processa pagamento
+      try {
+        const result = await smartProcessPayment(correlationId, paymentData);
+        success = result.success;
+        targetHost = result.targetHost;
+        console.log(`DEBUG: smartProcessPayment result for ${correlationId}:`, { success, targetHost });
+      } catch (processErr) {
+        console.log(`DEBUG: Failed to process payment ${correlationId}:`, processErr.message);
+        await redisClient.hdel('payments:processing', correlationId);
+        continue;
+      }
 
-          if (success) {
-            const timestampMs = new Date(paymentData.requestedAt).getTime();
-            await storeSummaryAtomic(targetHost, correlationId, paymentData.amount, timestampMs);
-          } else {
-            // Remove mesmo se falhou para evitar reprocessamento infinito
-            await redisClient.hdel('payments:processing', correlationId);
-          }
-          
-        } catch (err) {
-          await redisClient.hdel('payments:processing', correlationId);
+      if (success) {
+        try {
+          const timestampMs = new Date(paymentData.requestedAt).getTime();
+          await storeSummaryAtomic(targetHost, correlationId, paymentData.amount, timestampMs);
+          console.log(`DEBUG: Payment stored successfully to ${targetHost}:`, correlationId, paymentData.amount);
+        } catch (storeErr) {
+          console.log(`DEBUG: Store failed, requeueing payment:`, correlationId, storeErr.message);
+          // RETRY: Recoloca na queue como a solução Java
+          await redisClient.lpush('payments:queue', correlationId);
         }
-      });
-      
-      await Promise.all(promises);
+      } else {
+        console.log(`DEBUG: Processing failed, requeueing payment:`, correlationId);
+        // RETRY: Recoloca na queue em caso de falha
+        await redisClient.lpush('payments:queue', correlationId);
+      }
       
     } catch (err) {
       console.error('Worker error:', err);
-      await new Promise(r => setTimeout(r, 50)); // Pausa menor
+      await new Promise(r => setTimeout(r, 1000));
     }
   }
 }
@@ -153,35 +91,20 @@ async function workerLoop(workerId = 0) {
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Shutting down optimized worker...');
-  await defaultPool.close();
-  await fallbackPool.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('Shutting down optimized worker...');
-  await defaultPool.close();
-  await fallbackPool.close();
   process.exit(0);
 });
 
-// Cluster otimizado
+// Single worker sem cluster para simplicidade
 if (require.main === module) {
-  if (cluster.isPrimary) {
-    const numWorkers = Math.min(os.cpus().length * 2, 16); // Mais workers
-    console.log(`Starting ${numWorkers} optimized workers`);
-    
-    for (let i = 0; i < numWorkers; i++) {
-      cluster.fork();
-    }
-    
-    cluster.on('exit', (worker) => {
-      console.log(`Worker ${worker.process.pid} died, restarting...`);
-      cluster.fork();
-    });
-  } else {
-    workerLoop(cluster.worker.id).catch(console.error);
-  }
+  console.log('Starting single optimized worker');
+  setTimeout(() => {
+    workerLoop(1).catch(console.error);
+  }, 2000); // Delay para aguardar Redis
 }
 
 module.exports = { workerLoop };

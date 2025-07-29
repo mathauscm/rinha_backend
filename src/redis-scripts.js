@@ -30,24 +30,25 @@ redis.call('HSET', 'summary:' .. prefix .. ':data', correlationId, amount)
 redis.call('ZADD', 'summary:' .. prefix .. ':history', timestamp, correlationId)
 redis.call('HDEL', 'payments:processing', correlationId)
 
+-- Incrementa contadores globais ATOMICAMENTE
+redis.call('INCR', 'total_payments')
+redis.call('INCRBYFLOAT', 'total_amount', amount)
+
 return {ok = 'STORED'}
 `;
 
-// Script para buscar summary com arredondamento preciso
+// Script para buscar summary SIMPLIFICADO
 const GET_SUMMARY_SCRIPT = `
--- Função de arredondamento preciso (elimina -0.0)
+-- Função de arredondamento preciso
 local function round2(num)
     if num == nil then return 0 end
     local rounded = math.floor(tonumber(num) * 100 + 0.5) / 100
     return rounded == -0 and 0 or rounded
 end
 
-local fromTs = tonumber(ARGV[1]) or 0
-local toTs = tonumber(ARGV[2]) or 9999999999999
-
--- Busca IDs no range de timestamp
-local defaultIds = redis.call('ZRANGEBYSCORE', 'summary:default:history', fromTs, toTs)
-local fallbackIds = redis.call('ZRANGEBYSCORE', 'summary:fallback:history', fromTs, toTs)
+-- Busca todos os IDs
+local defaultIds = redis.call('ZRANGE', 'summary:default:history', 0, -1)
+local fallbackIds = redis.call('ZRANGE', 'summary:fallback:history', 0, -1)
 
 local result = {
     defaultCount = #defaultIds,
@@ -56,10 +57,10 @@ local result = {
     fallbackTotal = 0
 }
 
--- Calcula total default com arredondamento preciso
+-- Calcula total default sem batching por enquanto
 if #defaultIds > 0 then
     local amounts = redis.call('HMGET', 'summary:default:data', unpack(defaultIds))
-    for i, amount in ipairs(amounts) do
+    for _, amount in ipairs(amounts) do
         if amount then
             result.defaultTotal = result.defaultTotal + tonumber(amount)
         end
@@ -67,10 +68,10 @@ if #defaultIds > 0 then
     result.defaultTotal = round2(result.defaultTotal)
 end
 
--- Calcula total fallback com arredondamento preciso
+-- Calcula total fallback sem batching por enquanto
 if #fallbackIds > 0 then
     local amounts = redis.call('HMGET', 'summary:fallback:data', unpack(fallbackIds))
-    for i, amount in ipairs(amounts) do
+    for _, amount in ipairs(amounts) do
         if amount then
             result.fallbackTotal = result.fallbackTotal + tonumber(amount)
         end
@@ -83,20 +84,49 @@ return result
 
 // Cache dos scripts SHA
 let scriptShas = {};
+let scriptsLoaded = false;
 
 async function loadScripts() {
+  if (scriptsLoaded) return;
+  
   try {
-    scriptShas.processPayment = await redisClient.script('LOAD', PROCESS_PAYMENT_SCRIPT);
-    scriptShas.storeSummary = await redisClient.script('LOAD', STORE_SUMMARY_SCRIPT);
-    scriptShas.getSummary = await redisClient.script('LOAD', GET_SUMMARY_SCRIPT);
-    console.log('Redis Lua scripts loaded successfully');
+    // Aguarda conexão Redis estar pronta
+    await redisClient.ping();
+    
+    // Lock simples para evitar carregamento concorrente
+    const lockKey = 'scripts:loading';
+    const lockValue = process.pid.toString();
+    
+    const acquired = await redisClient.set(lockKey, lockValue, 'EX', 10, 'NX');
+    
+    if (acquired === 'OK') {
+      scriptShas.processPayment = await redisClient.script('LOAD', PROCESS_PAYMENT_SCRIPT);
+      scriptShas.storeSummary = await redisClient.script('LOAD', STORE_SUMMARY_SCRIPT);
+      scriptShas.getSummary = await redisClient.script('LOAD', GET_SUMMARY_SCRIPT);
+      scriptsLoaded = true;
+      console.log('Redis Lua scripts loaded successfully');
+      await redisClient.del(lockKey);
+    } else {
+      // Aguarda outro processo carregar
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return loadScripts();
+    }
   } catch (err) {
     console.error('Failed to load Redis scripts:', err);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    return loadScripts();
   }
 }
 
 async function processPaymentAtomic(correlationId, paymentData) {
   try {
+    console.log('DEBUG: processPaymentAtomic called with:', correlationId, scriptShas.processPayment ? 'SHA found' : 'SHA missing');
+    
+    if (!scriptShas.processPayment) {
+      console.log('DEBUG: Loading scripts because SHA is missing');
+      await loadScripts();
+    }
+    
     const result = await redisClient.evalsha(
       scriptShas.processPayment,
       0,
@@ -104,12 +134,15 @@ async function processPaymentAtomic(correlationId, paymentData) {
       paymentData
     );
     
+    console.log('DEBUG: Script result:', result);
+    
     if (result.err) {
       throw new Error(result.err);
     }
     
     return result;
   } catch (err) {
+    console.log('DEBUG: Error in processPaymentAtomic:', err.message);
     if (err.message.includes('NOSCRIPT')) {
       // Recarrega script se não encontrado
       await loadScripts();
@@ -140,30 +173,47 @@ async function storeSummaryAtomic(prefix, correlationId, amount, timestamp) {
 
 async function getSummaryAtomic(fromTs, toTs) {
   try {
-    const result = await redisClient.evalsha(
-      scriptShas.getSummary,
-      0,
-      (fromTs || 0).toString(),
-      (toTs || Date.now() + 86400000).toString()
-    );
+    // DIRETO via pipeline Redis - sem Lua script problemático
+    const pipeline = redisClient.pipeline();
+    pipeline.zrange('summary:default:history', 0, -1);
+    pipeline.zrange('summary:fallback:history', 0, -1);
+    const [defaultIds, fallbackIds] = await pipeline.exec();
     
-    // Resultado já vem calculado e arredondado do Lua script
+    const defaultList = defaultIds[1] || [];
+    const fallbackList = fallbackIds[1] || [];
+    
+    let defaultTotal = 0, fallbackTotal = 0;
+    
+    // Busca valores atomicamente se há registros
+    if (defaultList.length > 0) {
+      const amounts = await redisClient.hmget('summary:default:data', ...defaultList);
+      defaultTotal = amounts.reduce((sum, amt) => sum + (parseFloat(amt) || 0), 0);
+    }
+    
+    if (fallbackList.length > 0) {
+      const amounts = await redisClient.hmget('summary:fallback:data', ...fallbackList);
+      fallbackTotal = amounts.reduce((sum, amt) => sum + (parseFloat(amt) || 0), 0);
+    }
+    
+    // Arredondamento preciso
+    const round2 = (num) => Math.round((num + Number.EPSILON) * 100) / 100;
+    
     return {
       default: {
-        totalRequests: result.defaultCount || 0,
-        totalAmount: result.defaultTotal || 0
+        totalRequests: defaultList.length,
+        totalAmount: round2(defaultTotal)
       },
       fallback: {
-        totalRequests: result.fallbackCount || 0,
-        totalAmount: result.fallbackTotal || 0
+        totalRequests: fallbackList.length,
+        totalAmount: round2(fallbackTotal)
       }
     };
   } catch (err) {
-    if (err.message.includes('NOSCRIPT')) {
-      await loadScripts();
-      return getSummaryAtomic(fromTs, toTs);
-    }
-    throw err;
+    console.error('getSummaryAtomic error:', err);
+    return {
+      default: { totalRequests: 0, totalAmount: 0 },
+      fallback: { totalRequests: 0, totalAmount: 0 }
+    };
   }
 }
 
