@@ -1,16 +1,6 @@
-const { processPaymentAtomic } = require('../redis-scripts');
+const { processPaymentAtomic, getSummaryAtomic } = require('../redis-scripts');
 const { validate: uuidValidate } = require('uuid');
 const { encode } = require('@msgpack/msgpack');
-const redisClient = require('../cache/redisClient');
-
-// Pre-compiled responses para economizar CPU
-const RESPONSES = {
-  INVALID_UUID: '{"error":"Invalid or missing correlationId"}',
-  INVALID_AMOUNT: '{"error":"Invalid or missing amount"}',
-  ALREADY_PROCESSING: '{"error":"Payment already processing"}',
-  QUEUED: '{"message":"Payment queued"}',
-  INTERNAL_ERROR: '{"error":"Internal Server Error"}'
-};
 
 // Pool de objetos reutilizáveis
 const paymentObjectPool = [];
@@ -31,7 +21,7 @@ async function handlePostPayments(body) {
   const { correlationId, amount } = body;
 
   // Validações ultra-rápidas
-  if (!correlationId || typeof correlationId !== 'string' || correlationId.length === 0) {
+  if (!correlationId || typeof correlationId !== 'string' || !uuidValidate(correlationId)) {
     throw new Error('INVALID_UUID');
   }
   if (typeof amount !== 'number' || amount <= 0) {
@@ -49,10 +39,13 @@ async function handlePostPayments(body) {
   // USA SCRIPT ATÔMICO para evitar inconsistências
   try {
     await processPaymentAtomic(correlationId, serialized.toString('base64'));
+    console.log(`DEBUG: Payment ${correlationId} queued successfully`);
   } catch (err) {
     if (err.message === 'ALREADY_PROCESSING') {
+      console.log(`DEBUG: Payment ${correlationId} already processing`);
       throw new Error('ALREADY_PROCESSING');
     }
+    console.error(`DEBUG: Error queueing payment ${correlationId}:`, err);
     throw err;
   }
   
@@ -61,48 +54,13 @@ async function handlePostPayments(body) {
 
 async function handleGetPaymentsSummary() {
   try {
-    console.log('DEBUG: Summary calculation started');
+    console.log('DEBUG: Summary request started');
     
-    // Busca IDs atomicamente
-    const defaultIds = await redisClient.zrange('summary:default:history', 0, -1);
-    const fallbackIds = await redisClient.zrange('summary:fallback:history', 0, -1);
+    // Usa a função de summary atômica corrigida
+    const summary = await getSummaryAtomic();
     
-    console.log(`DEBUG: Found ${defaultIds.length} default, ${fallbackIds.length} fallback`);
-    
-    let defaultTotal = 0, fallbackTotal = 0;
-    
-    // Busca valores para default
-    if (defaultIds.length > 0) {
-      const amounts = await redisClient.hmget('summary:default:data', ...defaultIds);
-      console.log('DEBUG: Default amounts sample:', amounts.slice(0, 3));
-      defaultTotal = amounts.reduce((sum, amt) => sum + (parseFloat(amt) || 0), 0);
-    }
-    
-    // Busca valores para fallback
-    if (fallbackIds.length > 0) {
-      const amounts = await redisClient.hmget('summary:fallback:data', ...fallbackIds);
-      console.log('DEBUG: Fallback amounts sample:', amounts.slice(0, 3));
-      fallbackTotal = amounts.reduce((sum, amt) => sum + (parseFloat(amt) || 0), 0);
-    }
-    
-    console.log(`DEBUG: Calculated totals - default: ${defaultTotal}, fallback: ${fallbackTotal}`);
-    
-    // Arredondamento preciso
-    const round2 = (num) => Math.round((num + Number.EPSILON) * 100) / 100;
-    
-    const result = {
-      default: {
-        totalRequests: defaultIds.length,
-        totalAmount: round2(defaultTotal)
-      },
-      fallback: {
-        totalRequests: fallbackIds.length,
-        totalAmount: round2(fallbackTotal)
-      }
-    };
-    
-    console.log('DEBUG: Final result:', result);
-    return result;
+    console.log('DEBUG: Summary result:', summary);
+    return summary;
     
   } catch (err) {
     console.error('Summary calculation error:', err);
