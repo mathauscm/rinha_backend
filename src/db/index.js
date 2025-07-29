@@ -44,7 +44,10 @@ async function getPaymentsSummary(from, to) {
 
   const res = await pool.query(query, values);
 
-  const summary = { default: { totalRequests: 0, totalAmount: 0 }, fallback: { totalRequests: 0, totalAmount: 0 } };
+  const summary = { 
+    default: { totalRequests: 0, totalAmount: 0 }, 
+    fallback: { totalRequests: 0, totalAmount: 0 } 
+  };
 
   for (const row of res.rows) {
     if (row.payment_processor === 'default') {
@@ -61,4 +64,5 @@ async function getPaymentsSummary(from, to) {
 
 module.exports = {
   getPaymentsSummary,
+  pool,
 };

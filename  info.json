@@ -1,0 +1,10 @@
+{
+    "name": "Mathaus Carvalho",
+    "social": ["https://www.linkedin.com/in/mathauscarvalho/"],
+    "source-code-repo": "https://github.com/mathauscm/rinha_backend",
+    "langs": ["node"],
+    "storages": ["postgresql", "redis"],
+    "messaging": [],
+    "load-balancers": ["nginx"],
+    "other-technologies": ["docker", "alpine"]
+}
