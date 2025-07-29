@@ -28,7 +28,7 @@ async function handlePostPayments(req, res, body) {
     );
     await redisClient.lpush('payments:queue', correlationId);
 
-    res.writeHead(202, { 'Content-Type': 'application/json' });
+    res.writeHead(201, { 'Content-Type': 'application/json' });
     res.end('{"message":"Payment queued"}');
   } catch (error) {
     res.writeHead(500, { 'Content-Type': 'application/json' });

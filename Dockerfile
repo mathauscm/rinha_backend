@@ -1,22 +1,32 @@
+# Multi-stage build para otimização máxima
 FROM node:20-alpine AS builder
 
-WORKDIR /usr/src/app
-
+WORKDIR /app
 COPY package*.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci --only=production --no-audit --no-fund
 
-FROM node:20-alpine AS runtime
+# Production stage ultra-lean
+FROM node:20-alpine
 
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
+# Otimizações do sistema
+RUN apk add --no-cache tini && \
+    addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
 
-WORKDIR /usr/src/app
+WORKDIR /app
 
-COPY --from=builder --chown=nodejs:nodejs /usr/src/app/node_modules ./node_modules
-COPY --chown=nodejs:nodejs . .
+# Copy apenas o necessário
+COPY --from=builder /app/node_modules ./node_modules
+COPY package*.json ./
+COPY src/ ./src/
+
+# Otimizações Node.js em runtime
+ENV NODE_ENV=production
+ENV NODE_OPTIONS="--max-old-space-size=100 --gc-interval=100 --optimize-for-size"
+ENV UV_THREADPOOL_SIZE=32
 
 USER nodejs
 
-EXPOSE 9999
-
-CMD ["node", "--max-old-space-size=64", "src/server.js"]
+# Use tini para signal handling
+ENTRYPOINT ["tini", "--"]
+CMD ["npm", "start"]

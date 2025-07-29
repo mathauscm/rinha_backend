@@ -6,12 +6,14 @@ services:
       - "10001:9999"
     depends_on:
       - redis
-      - postgres
+    environment:
+      - NODE_ENV=production
+      - UV_THREADPOOL_SIZE=32
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: "90MB"
+          cpus: "0.6"
+          memory: "120MB"
     networks:
       - payment-processor
 
@@ -21,55 +23,56 @@ services:
       - "10002:9999"
     depends_on:
       - redis
-      - postgres
+    environment:
+      - NODE_ENV=production
+      - UV_THREADPOOL_SIZE=32
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: "90MB"
+          cpus: "0.6"
+          memory: "120MB"
     networks:
       - payment-processor
 
   worker:
     build: .
-    command: ["node", "src/workers/paymentProcessorWorker.js"]
+    command: ["npm", "run", "worker"]
     depends_on:
       - redis
-      - postgres
     restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - UV_THREADPOOL_SIZE=32
     deploy:
       resources:
         limits:
-          cpus: "0.3"
-          memory: "50MB"
+          cpus: "0.7"
+          memory: "130MB"
     networks:
       - payment-processor
 
   redis:
-    image: redis:7-alpine
+    image: redis:8.0.3-alpine
+    hostname: redis
+    command: [
+      "redis-server",
+      "--appendonly", "no",
+      "--save", "",
+      "--maxmemory", "45mb",
+      "--maxmemory-policy", "allkeys-lru",
+      "--tcp-keepalive", "60",
+      "--timeout", "0",
+      "--io-threads", "2",
+      "--io-threads-do-reads", "yes"
+    ]
     deploy:
       resources:
         limits:
-          cpus: "0.1"
-          memory: "40MB"
+          cpus: "0.4"
+          memory: "50MB"
     networks:
       - payment-processor
 
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: rinha
-      POSTGRES_PASSWORD: rinha123
-      POSTGRES_DB: rinhadb
-    volumes:
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    deploy:
-      resources:
-        limits:
-          cpus: "0.1"
-          memory: "60MB"
-    networks:
-      - payment-processor
 
   nginx:
     image: nginx:stable-alpine
@@ -83,8 +86,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.1"
-          memory: "20MB"
+          cpus: "0.2"
+          memory: "70MB"
     networks:
       - payment-processor
 

@@ -1,41 +1,53 @@
 const redisClient = require('../cache/redisClient');
-const http = require('http');
-const { Pool } = require('pg');
+const { Pool } = require('undici');
+const cluster = require('cluster');
+const os = require('os');
 
-// Pool dedicado para o worker
-const pool = new Pool({
-  host: 'postgres',
-  port: 5432,
-  user: 'rinha',
-  password: 'rinha123',
-  database: 'rinhadb',
-  max: 10,
-  min: 2,
-  idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 1000,
-  acquireTimeoutMillis: 500,
-  statement_timeout: 100,
-  query_timeout: 100,
+// HTTP pools otimizados
+const defaultPool = new Pool('http://payment-processor-default:8080', {
+  connections: 50,
+  pipelining: 10,
+  keepAliveTimeout: 30000,
+  keepAliveMaxTimeout: 600000
 });
 
-const PAYMENT_PROCESSOR_DEFAULT = 'payment-processor-default';
-const PAYMENT_PROCESSOR_FALLBACK = 'payment-processor-fallback';
+const fallbackPool = new Pool('http://payment-processor-fallback:8080', {
+  connections: 50,
+  pipelining: 10,
+  keepAliveTimeout: 30000,
+  keepAliveMaxTimeout: 600000
+});
+
+const PAYMENT_PROCESSOR_DEFAULT = 'default';
+const PAYMENT_PROCESSOR_FALLBACK = 'fallback';
 
 async function processPayment(correlationId, paymentData) {
   let targetHost = PAYMENT_PROCESSOR_DEFAULT;
   let success = false;
   let lastError = null;
+  let retries = 0;
+  const maxRetries = 3;
 
-  try {
-    // Tenta enviar para default
-    await postPayment(targetHost, correlationId, paymentData);
-    success = true;
-  } catch (err) {
-    lastError = err;
-    // Tenta fallback
+  // Tenta default com retry
+  while (retries < maxRetries && !success) {
+    try {
+      await postPayment(defaultPool, correlationId, paymentData);
+      success = true;
+      break;
+    } catch (err) {
+      lastError = err;
+      retries++;
+      if (retries < maxRetries) {
+        await new Promise(r => setTimeout(r, 100)); // 100ms retry delay
+      }
+    }
+  }
+
+  // Se falhou, tenta fallback
+  if (!success) {
     targetHost = PAYMENT_PROCESSOR_FALLBACK;
     try {
-      await postPayment(targetHost, correlationId, paymentData);
+      await postPayment(fallbackPool, correlationId, paymentData);
       success = true;
     } catch (err2) {
       lastError = err2;
@@ -45,100 +57,84 @@ async function processPayment(correlationId, paymentData) {
   return { success, targetHost, error: lastError };
 }
 
-function postPayment(hostname, correlationId, paymentData) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify({
-      correlationId,
-      amount: paymentData.amount,
-      requestedAt: paymentData.requestedAt,
-    });
-
-    const options = {
-      hostname,
-      port: 8080,
-      path: '/payments',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-      },
-      timeout: 3000, // 3 segundos timeout
-    };
-
-    const req = http.request(options, (res) => {
-      let responseData = '';
-      res.on('data', chunk => responseData += chunk);
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(responseData);
-        } else {
-          reject(new Error(`Payment failed with status ${res.statusCode}`));
-        }
-      });
-    });
-
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Request timeout'));
-    });
-    
-    req.write(data);
-    req.end();
+async function postPayment(pool, correlationId, paymentData) {
+  const body = JSON.stringify({
+    correlationId,
+    amount: paymentData.amount,
+    requestedAt: paymentData.requestedAt,
   });
+
+  const response = await pool.request({
+    path: '/payments',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body,
+    throwOnError: true,
+    headersTimeout: 500,
+    bodyTimeout: 500,
+  });
+
+  return response.body.text();
 }
 
-async function savePaymentToDB(correlationId, amount, requestedAt, targetHost) {
-  const client = await pool.connect();
+async function storeSummary(correlationId, amount, requestedAt, targetHost) {
+  const timestampMs = new Date(requestedAt).getTime();
+  
+  const pipeline = redisClient.pipeline();
+  pipeline.hset(`summary:${targetHost}:data`, correlationId, amount);
+  pipeline.zadd(`summary:${targetHost}:history`, timestampMs, correlationId);
+  
   try {
-    const paymentProcessor = targetHost === PAYMENT_PROCESSOR_DEFAULT ? 'default' : 'fallback';
-    await client.query(
-      'INSERT INTO payments(correlation_id, amount, requested_at, payment_processor) VALUES ($1, $2, $3, $4)',
-      [correlationId, amount, requestedAt, paymentProcessor]
-    );
+    await pipeline.exec();
   } catch (err) {
-    console.error('Error saving payment to DB:', err);
-    // Não falha o worker por erro de DB
-  } finally {
-    client.release();
+    console.error('Error storing summary:', err);
   }
 }
 
-async function workerLoop() {
-  console.log('Payment processor worker started');
+async function workerLoop(workerId = 0) {
+  console.log(`Payment processor worker ${workerId} started`);
   
   while (true) {
     try {
-      // Espera até ter algo na fila (bloqueante)
-      const res = await redisClient.brpop('payments:queue', 0);
-      if (!res) continue;
+      // Processa múltiplos pagamentos em lote
+      const batch = [];
       
-      const [, correlationId] = res;
-
-      const paymentDataJson = await redisClient.hget('payments:processing', correlationId);
-      if (!paymentDataJson) {
-        console.warn(`No payment data for correlationId ${correlationId}`);
-        continue;
+      // Pega até 10 pagamentos por vez
+      for (let i = 0; i < 10; i++) {
+        const res = await redisClient.brpop('payments:queue', i === 0 ? 0 : 0.01);
+        if (!res) break;
+        batch.push(res[1]);
       }
       
-      const paymentData = JSON.parse(paymentDataJson);
+      if (batch.length === 0) continue;
+      
+      // Processa todos em paralelo
+      await Promise.all(batch.map(async (correlationId) => {
+        try {
+          const paymentDataJson = await redisClient.hget('payments:processing', correlationId);
+          if (!paymentDataJson) return;
+          
+          const paymentData = JSON.parse(paymentDataJson);
+          const { success, targetHost, error } = await processPayment(correlationId, paymentData);
 
-      const { success, targetHost, error } = await processPayment(correlationId, paymentData);
-
-      if (success) {
-        // Salva no banco e remove da fila de processamento
-        await savePaymentToDB(correlationId, paymentData.amount, paymentData.requestedAt, targetHost);
-        await redisClient.hdel('payments:processing', correlationId);
-      } else {
-        console.error(`Failed to process payment ${correlationId}:`, error?.message);
-        // Remove da fila de processamento mesmo em caso de falha
-        // para evitar loop infinito
-        await redisClient.hdel('payments:processing', correlationId);
-      }
+          if (success) {
+            await storeSummary(correlationId, paymentData.amount, paymentData.requestedAt, targetHost);
+          } else {
+            console.error(`Failed to process payment ${correlationId}:`, error?.message);
+          }
+          
+          await redisClient.hdel('payments:processing', correlationId);
+        } catch (err) {
+          console.error(`Error processing payment ${correlationId}:`, err);
+          await redisClient.hdel('payments:processing', correlationId);
+        }
+      }));
+      
     } catch (err) {
       console.error('Worker loop error:', err);
-      // Pequena pausa antes de continuar para evitar loop agressivo
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 100));
     }
   }
 }
@@ -146,19 +142,35 @@ async function workerLoop() {
 // Pool cleanup
 process.on('SIGINT', async () => {
   console.log('Shutting down worker...');
-  await pool.end();
+  await defaultPool.close();
+  await fallbackPool.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('Shutting down worker...');
-  await pool.end();
+  await defaultPool.close();
+  await fallbackPool.close();
   process.exit(0);
 });
 
-// Inicia o worker se executado diretamente
+// Cluster de workers
 if (require.main === module) {
-  workerLoop().catch(console.error);
+  if (cluster.isPrimary) {
+    const numWorkers = Math.min(os.cpus().length, 8); // Máximo 8 workers
+    console.log(`Starting ${numWorkers} workers`);
+    
+    for (let i = 0; i < numWorkers; i++) {
+      cluster.fork();
+    }
+    
+    cluster.on('exit', (worker) => {
+      console.log(`Worker ${worker.process.pid} died, restarting...`);
+      cluster.fork();
+    });
+  } else {
+    workerLoop(cluster.worker.id).catch(console.error);
+  }
 }
 
 module.exports = {

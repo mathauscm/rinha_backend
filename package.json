@@ -3,14 +3,16 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node src/server.js",
-    "worker": "node src/workers/paymentProcessorWorker.js",
+    "start": "node --max-old-space-size=100 --gc-interval=100 --optimize-for-size --no-compilation-cache --turbo-fast-api-calls src/server-uws.js",
+    "worker": "node --max-old-space-size=80 --gc-interval=50 --optimize-for-size --turbo-fast-api-calls src/workers/paymentProcessorWorker-optimized.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "ioredis": "^5.3.2",
-    "pg": "^8.11.3",
-    "uuid": "^9.0.1"
+    "uuid": "^9.0.1",
+    "undici": "^6.0.1",
+    "uws": "^20.46.0",
+    "@msgpack/msgpack": "^3.0.0"
   },
   "keywords": [],
   "author": "",

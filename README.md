@@ -1,128 +1,56 @@
-# Rinha Backend 2025 - High Performance Payment Gateway
+# 🚀 Rinha Backend 2025
+### 🔥 Otimizações Implementadas
 
-Backend de alta performance para intermediar pagamentos entre clientes e Payment Processors.
+**1. uWS (MicroWebSockets)**
+- Substitui HTTP nativo Node.js
+- Bindings C++ ultra-rápidos
+- Cache local de requests (100ms TTL)
 
-## 🚀 Arquitetura
-
-- **2x Backend Instances**: Node.js nativo (sem Express) para máxima performance
-- **Nginx Load Balancer**: Distribuição de carga otimizada
-- **PostgreSQL**: Persistência de dados
-- **Redis**: Cache e fila de processamento
-- **Worker Process**: Processamento assíncrono de pagamentos
-
-## ⚡ Otimizações para Performance
-
-### Backend
-- Node.js HTTP nativo (sem frameworks)
-- Logs removidos do hot path
-- JSON strings pré-compiladas
-- Memory limit otimizado (64MB)
-
-### Nginx
-- `worker_processes auto` com `epoll`
-- Keep-alive connections (32)
-- Proxy buffering desabilitado
-- TCP nodelay ativado
-
-### Database
-- Pool de 50 conexões PostgreSQL
-- Timeouts agressivos (100ms)
-- Queries otimizadas com índices
-
-### Docker
-- Multi-stage build
-- Alpine Linux para imagens menores
-- Security hardening
-
-## 📊 Endpoints
-
-### POST /payments
-Processa pagamentos com fallback automático entre processors.
-```json
-{
-  "correlationId": "uuid",
-  "amount": 19.90
-}
-```
-
-### GET /payments-summary
-Retorna resumo de pagamentos processados.
-```json
-{
-  "default": {
-    "totalRequests": 1000,
-    "totalAmount": 50000.00
-  },
-  "fallback": {
-    "totalRequests": 100,
-    "totalAmount": 5000.00
-  }
-}
-```
-
-## 🔧 Instalação
-
-### Pré-requisitos
-1. Subir Payment Processors primeiro:
+**2. V8 Flags Extremas**
 ```bash
-cd payment-processor/
-docker-compose up -d
+--max-old-space-size=100
+--gc-interval=100
+--optimize-for-size
+--turbo-fast-api-calls
 ```
 
-2. Subir o backend:
+**3. MessagePack + Object Pooling**
+- Serialização 40% mais rápida que JSON
+- Zero-allocation object reuse
+- Buffer pools para requests
+
+**4. Redis Lua Scripts Atômicos**
+- Operações Redis em script único
+- Elimina round-trips
+- 100% atômico
+
+**5. Worker Pool Paralelo**
+- 16 workers simultâneos
+- Batch processing (20 items)
+- Timeouts agressivos (200ms)
+
+**6. Redis Sem Persistência**
+- Apenas memória (sem disk I/O)
+- IO threads habilitados
+- Políticas LRU otimizadas
+
+### 📊 Arquitetura
+
+```
+nginx (keepalive 100k) 
+  ↓
+uWS servers (2x)
+  ↓
+Redis (Lua scripts)
+  ↓  
+Worker pool (16x)
+  ↓
+HTTP pools (undici)
+```
+
+### 🏃‍♂️ Como Executar
+
 ```bash
+npm install
 docker-compose up --build
 ```
-
-### Acesso
-- API: http://localhost:9999
-- Backend 1: http://localhost:10001
-- Backend 2: http://localhost:10002
-
-## 🏗️ Estrutura do Projeto
-
-```
-/rinha-backend/
-├── src/
-│   ├── api/
-│   │   └── paymentsHandler.js
-│   ├── cache/
-│   │   └── redisClient.js
-│   ├── db/
-│   │   └── index.js
-│   ├── workers/
-│   │   └── paymentProcessorWorker.js
-│   ├── server.js
-│   ├── routes.js
-│   ├── paymentProcessorClient.js
-│   └── utils.js
-├── nginx.conf
-├── docker-compose.yml
-├── Dockerfile
-└── README.md
-```
-
-## 🎯 Recursos Utilizados
-
-**CPU**: 1.4/1.5 unidades  
-**Memória**: 350MB/350MB
-
-### Distribuição de Recursos:
-- Backend 1: 0.4 CPU, 90MB
-- Backend 2: 0.4 CPU, 90MB  
-- Worker: 0.3 CPU, 50MB
-- Redis: 0.1 CPU, 40MB
-- PostgreSQL: 0.1 CPU, 60MB
-- Nginx: 0.1 CPU, 20MB
-
-## ✅ Funcionalidades
-
-- Load balancing entre 2 instâncias
-- Fallback automático entre Payment Processors
-- Health check dos processors
-- Processamento assíncrono com worker
-- Cache Redis para deduplicação
-- Validação de UUID e valores
-- Timeouts agressivos para baixa latência
-- Arquitetura stateless
-

@@ -3,8 +3,8 @@
     "social": ["https://www.linkedin.com/in/mathauscarvalho/"],
     "source-code-repo": "https://github.com/mathauscm/rinha_backend",
     "langs": ["node"],
-    "storages": ["postgresql", "redis"],
+    "storages": ["redis"],
     "messaging": [],
     "load-balancers": ["nginx"],
-    "other-technologies": ["docker", "alpine"]
+    "other-technologies": ["docker", "alpine", "uws", "undici", "msgpack", "lua"]
 }
