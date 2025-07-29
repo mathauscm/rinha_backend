@@ -1,5 +1,7 @@
 const redisClient = require('../cache/redisClient');
 const { storeSummaryAtomic } = require('../redis-scripts');
+const { getOptimalProcessor } = require('../healthChecker');
+const SimpleCircuitBreaker = require('../circuitBreaker');
 const { Pool } = require('undici');
 const { decode } = require('@msgpack/msgpack');
 const cluster = require('cluster');
@@ -23,6 +25,10 @@ const fallbackPool = new Pool('http://payment-processor-fallback:8080', {
   headersTimeout: 300,
   bodyTimeout: 300
 });
+
+// Circuit breakers para cada processador
+const defaultBreaker = new SimpleCircuitBreaker(5, 5000); // 5 falhas, 5s timeout
+const fallbackBreaker = new SimpleCircuitBreaker(5, 5000);
 
 // Buffer pool para reutilizar objetos
 const requestBodyPool = [];
@@ -56,34 +62,34 @@ async function postPayment(pool, correlationId, paymentData) {
   return response.body.text();
 }
 
-async function processPayment(correlationId, paymentData) {
-  let targetHost = 'default';
+async function smartProcessPayment(correlationId, paymentData) {
+  // 1. Consulta health check para escolher processador ótimo
+  const { processor, pool } = await getOptimalProcessor(defaultPool, fallbackPool);
+  const breaker = processor === 'default' ? defaultBreaker : fallbackBreaker;
+  
   let success = false;
-  let retries = 0;
-  const maxRetries = 2; // Reduzido para ser mais agressivo
+  let targetHost = processor;
 
-  // Tenta default com retry mínimo
-  while (retries < maxRetries && !success) {
-    try {
-      await postPayment(defaultPool, correlationId, paymentData);
-      success = true;
-      break;
-    } catch (err) {
-      retries++;
-      if (retries < maxRetries) {
-        await new Promise(r => setTimeout(r, 50)); // 50ms retry
+  // 2. Tenta processador ótimo com circuit breaker
+  try {
+    await breaker.execute(() => postPayment(pool, correlationId, paymentData));
+    success = true;
+  } catch (err) {
+    // 3. Se falhou e era default, tenta fallback
+    if (processor === 'default') {
+      try {
+        await fallbackBreaker.execute(() => 
+          postPayment(fallbackPool, correlationId, paymentData)
+        );
+        success = true;
+        targetHost = 'fallback';
+      } catch (err2) {
+        // Ambos falharam
+        success = false;
       }
-    }
-  }
-
-  // Fallback se necessário
-  if (!success) {
-    targetHost = 'fallback';
-    try {
-      await postPayment(fallbackPool, correlationId, paymentData);
-      success = true;
-    } catch (err) {
-      // Ignora erro - will be handled upstream
+    } else {
+      // Era fallback e falhou
+      success = false;
     }
   }
 
@@ -120,7 +126,7 @@ async function workerLoop(workerId = 0) {
           if (!paymentDataJson) return;
           
           const paymentData = decode(Buffer.from(paymentDataJson));
-          const { success, targetHost } = await processPayment(correlationId, paymentData);
+          const { success, targetHost } = await smartProcessPayment(correlationId, paymentData);
 
           if (success) {
             const timestampMs = new Date(paymentData.requestedAt).getTime();

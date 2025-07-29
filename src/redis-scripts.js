@@ -33,8 +33,15 @@ redis.call('HDEL', 'payments:processing', correlationId)
 return {ok = 'STORED'}
 `;
 
-// Script para buscar summary ultra-otimizado
+// Script para buscar summary com arredondamento preciso
 const GET_SUMMARY_SCRIPT = `
+-- Função de arredondamento preciso (elimina -0.0)
+local function round2(num)
+    if num == nil then return 0 end
+    local rounded = math.floor(tonumber(num) * 100 + 0.5) / 100
+    return rounded == -0 and 0 or rounded
+end
+
 local fromTs = tonumber(ARGV[1]) or 0
 local toTs = tonumber(ARGV[2]) or 9999999999999
 
@@ -45,17 +52,30 @@ local fallbackIds = redis.call('ZRANGEBYSCORE', 'summary:fallback:history', from
 local result = {
     defaultCount = #defaultIds,
     fallbackCount = #fallbackIds,
-    defaultAmounts = {},
-    fallbackAmounts = {}
+    defaultTotal = 0,
+    fallbackTotal = 0
 }
 
--- Busca amounts se tiver IDs
+-- Calcula total default com arredondamento preciso
 if #defaultIds > 0 then
-    result.defaultAmounts = redis.call('HMGET', 'summary:default:data', unpack(defaultIds))
+    local amounts = redis.call('HMGET', 'summary:default:data', unpack(defaultIds))
+    for i, amount in ipairs(amounts) do
+        if amount then
+            result.defaultTotal = result.defaultTotal + tonumber(amount)
+        end
+    end
+    result.defaultTotal = round2(result.defaultTotal)
 end
 
+-- Calcula total fallback com arredondamento preciso
 if #fallbackIds > 0 then
-    result.fallbackAmounts = redis.call('HMGET', 'summary:fallback:data', unpack(fallbackIds))
+    local amounts = redis.call('HMGET', 'summary:fallback:data', unpack(fallbackIds))
+    for i, amount in ipairs(amounts) do
+        if amount then
+            result.fallbackTotal = result.fallbackTotal + tonumber(amount)
+        end
+    end
+    result.fallbackTotal = round2(result.fallbackTotal)
 end
 
 return result
@@ -127,18 +147,15 @@ async function getSummaryAtomic(fromTs, toTs) {
       (toTs || Date.now() + 86400000).toString()
     );
     
-    // Processa resultado
-    const defaultAmounts = (result.defaultAmounts || []).map(a => parseFloat(a) || 0);
-    const fallbackAmounts = (result.fallbackAmounts || []).map(a => parseFloat(a) || 0);
-    
+    // Resultado já vem calculado e arredondado do Lua script
     return {
       default: {
-        totalRequests: result.defaultCount,
-        totalAmount: Math.round(defaultAmounts.reduce((sum, a) => sum + a, 0) * 100) / 100
+        totalRequests: result.defaultCount || 0,
+        totalAmount: result.defaultTotal || 0
       },
       fallback: {
-        totalRequests: result.fallbackCount,
-        totalAmount: Math.round(fallbackAmounts.reduce((sum, a) => sum + a, 0) * 100) / 100
+        totalRequests: result.fallbackCount || 0,
+        totalAmount: result.fallbackTotal || 0
       }
     };
   } catch (err) {

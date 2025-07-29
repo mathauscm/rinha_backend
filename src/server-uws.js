@@ -1,4 +1,4 @@
-const uWS = require('uws');
+const uWS = require('uwebsockets');
 const { encode, decode } = require('@msgpack/msgpack');
 const paymentsHandler = require('./api/paymentsHandler-uws');
 
