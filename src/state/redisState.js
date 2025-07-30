@@ -104,6 +104,21 @@ class SharedPaymentStorage {
     }
   }
 
+  async remove(correlationId) {
+    try {
+      // Remove de todas as estruturas
+      const pipeline = redis.pipeline()
+        .srem(`processed:${this.prefix}`, correlationId)
+        .decr(`count:${this.prefix}`)
+        .lrem(`payments:${this.prefix}`, 1, correlationId);
+      
+      await pipeline.exec();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
   async getSummary(fromTimestamp = null, toTimestamp = null) {
     try {
       if (!fromTimestamp && !toTimestamp) {
