@@ -8,12 +8,12 @@ services:
       - redis
     environment:
       - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=16
+      - UV_THREADPOOL_SIZE=32
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: "80MB"
+          cpus: "0.6"
+          memory: "150MB"
     networks:
       - payment-processor
 
@@ -25,58 +25,36 @@ services:
       - redis
     environment:
       - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=16
+      - UV_THREADPOOL_SIZE=32
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: "80MB"
-    networks:
-      - payment-processor
-
-  worker:
-    build: .
-    command: ["npm", "run", "worker"]
-    depends_on:
-      - redis
-    restart: unless-stopped
-    environment:
-      - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=8
-    deploy:
-      resources:
-        limits:
-          cpus: "0.4"
-          memory: "120MB"
+          cpus: "0.6"
+          memory: "150MB"
     networks:
       - payment-processor
 
   redis:
-    image: redis:8.0.3-alpine
+    image: redis:7-alpine
     hostname: redis
     command: [
       "redis-server",
       "--appendonly", "no",
       "--save", "",
-      "--maxmemory", "35mb",
+      "--maxmemory", "100mb",
       "--maxmemory-policy", "allkeys-lru",
       "--tcp-keepalive", "60",
-      "--timeout", "0",
-      "--io-threads", "4",
-      "--io-threads-do-reads", "yes",
-      "--lazyfree-lazy-eviction", "yes",
-      "--lazyfree-lazy-expire", "yes",
-      "--lazyfree-lazy-server-del", "yes",
-      "--replica-lazy-flush", "yes"
+      "--timeout", "300",
+      "--tcp-backlog", "511",
+      "--maxclients", "10000"
     ]
     deploy:
       resources:
         limits:
-          cpus: "0.15"
-          memory: "35MB"
+          cpus: "0.2"
+          memory: "100MB"
     networks:
       - payment-processor
-
 
   nginx:
     image: nginx:stable-alpine

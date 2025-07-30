@@ -3,8 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "node --max-old-space-size=70 --no-compilation-cache --turbo-fast-api-calls --optimize-for-size src/server-uws.js",
-    "worker": "node --max-old-space-size=100 --turbo-fast-api-calls --optimize-for-size src/workers/paymentProcessorWorker.js",
+    "start": "node --max-old-space-size=150 src/main.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
