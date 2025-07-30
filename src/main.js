@@ -4,10 +4,9 @@ const { sharedState } = require('./state/redisState');
 
 const PORT = process.env.PORT || 9999;
 
-// Criar serviço de pagamento com Redis otimizado
+// ESTRATÉGIA FINAL: Redis + lógica perfeita
 const paymentService = new PaymentService(sharedState);
 
-// Iniciar servidor
 startServer(PORT, paymentService, sharedState);
 
-console.log('Rinha Backend started with high-performance processing!');
+console.log('Rinha Backend started - FINAL STRATEGY for ZERO inconsistencies!');

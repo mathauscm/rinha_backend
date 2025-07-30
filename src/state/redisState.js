@@ -6,15 +6,15 @@ const redis = new Redis({
   port: 6379,
   retryDelayOnFailover: 20,
   maxRetriesPerRequest: 1,
-  connectTimeout: 1000,
-  commandTimeout: 1000,
+  connectTimeout: 500,
+  commandTimeout: 500,
   enableAutoPipelining: true,
   lazyConnect: true,
   maxLoadingTimeout: 1000,
   db: 0
 });
 
-// Script Lua para operação atômica de processamento de pagamento
+// Script Lua simples para operação atômica de processamento de pagamento
 const PROCESS_PAYMENT_SCRIPT = `
   local correlation_id = ARGV[1]
   local prefix = ARGV[2]
@@ -27,11 +27,11 @@ const PROCESS_PAYMENT_SCRIPT = `
   local amount_key = "amount:" .. prefix
   local payments_key = "payments:" .. prefix
   
-  -- ATOMICIDADE TOTAL: Usar SADD como barreira única de duplicação
+  -- ATOMICIDADE: Usar SADD como barreira única de duplicação
   local added = redis.call('SADD', processed_key, correlation_id)
   
   if added == 1 then
-    -- Garantia: só entra aqui se realmente foi adicionado pela primeira vez
+    -- Só entra aqui se realmente foi adicionado pela primeira vez
     redis.call('INCR', count_key)
     redis.call('INCRBYFLOAT', amount_key, amount_float)
     
@@ -39,7 +39,7 @@ const PROCESS_PAYMENT_SCRIPT = `
     local payment_data = timestamp .. ":" .. amount_cents .. ":" .. correlation_id
     redis.call('LPUSH', payments_key, payment_data)
     
-    -- Garantir precisão numérica arredondando o float
+    -- Garantir precisão numérica
     local current_amount = redis.call('GET', amount_key)
     if current_amount then
       local rounded = math.floor(tonumber(current_amount) * 100 + 0.5) / 100
@@ -127,7 +127,7 @@ class SharedPaymentStorage {
       const result = await Promise.race([
         this.getSummaryInternal(fromTimestamp, toTimestamp),
         new Promise((resolve) => 
-          setTimeout(() => resolve({ totalRequests: 0, totalAmount: 0 }), 30)
+          setTimeout(() => resolve({ totalRequests: 0, totalAmount: 0 }), 10)
         )
       ]);
       

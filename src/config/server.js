@@ -30,12 +30,7 @@ function startServer(port, paymentService, state) {
 
 async function purgeHandler(req, res, state) {
   try {
-    // Limpar todas as chaves Redis relacionadas ao nosso sistema
-    const keys = await redis.keys('*');
-    if (keys.length > 0) {
-      await redis.del(...keys);
-    }
-    
+    await redis.flushall();
     console.log('Redis purged - all payment data cleared');
     sendResponse(res, HttpStatus.OK, { message: 'Database purged successfully' });
   } catch (error) {
