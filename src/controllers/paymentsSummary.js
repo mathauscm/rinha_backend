@@ -5,16 +5,7 @@ function paymentsSummaryController(state) {
     try {
       const { from = null, to = null } = readQueryParams(req);
       
-      // Timeout ultra-curto para evitar 502
-      const result = await Promise.race([
-        paymentSummaryService(state, from, to),
-        new Promise((resolve) => 
-          setTimeout(() => resolve({
-            default: { totalRequests: 0, totalAmount: 0 },
-            fallback: { totalRequests: 0, totalAmount: 0 }
-          }), 20) // 20ms timeout ultra-agressivo
-        )
-      ]);
+      const result = await paymentSummaryService(state, from, to);
       
       sendResponse(res, HttpStatus.OK, result);
     } catch (error) {

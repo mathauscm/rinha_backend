@@ -50,18 +50,8 @@ class PaymentService {
         return; // Já processado
       }
 
-      // Registra no default primeiro
-      const defaultResult = {
-        correlationId,
-        amount,
-        requestedAt: new Date().toISOString(),
-        paymentProcessor: 'default'
-      };
-      
-      await this.recordSuccess(defaultResult);
-      
-      // Processa payment processors em background
-      this.executePaymentAsync(correlationId, amount).catch(() => {});
+      // Processa diretamente com os payment processors
+      await this.executePaymentAsync(correlationId, amount);
     } catch (error) {
       // Falha silenciosa para não afetar a resposta HTTP
     }
@@ -153,6 +143,10 @@ class PaymentService {
         
         if (response.statusCode === 200) {
           this.defaultFailures = Math.max(0, this.defaultFailures - 1);
+          await this.recordSuccess({
+            ...paymentData,
+            paymentProcessor: 'default'
+          });
           return;
         }
       } catch (error) {
@@ -178,7 +172,10 @@ class PaymentService {
         
         if (response.statusCode === 200) {
           this.fallbackFailures = Math.max(0, this.fallbackFailures - 1);
-          await this.updateToFallback(correlationId, amount, paymentData.requestedAt);
+          await this.recordSuccess({
+            ...paymentData,
+            paymentProcessor: 'fallback'
+          });
         }
       } catch (error) {
         this.fallbackFailures++;
@@ -187,24 +184,6 @@ class PaymentService {
     }
   }
 
-  async updateToFallback(correlationId, amount, requestedAt) {
-    try {
-      // Não remove do default - apenas adiciona no fallback para manter consistência
-      // Isso evita perda de dados se a operação falhar
-      const fallbackResult = {
-        correlationId,
-        amount,
-        requestedAt,
-        paymentProcessor: 'fallback'
-      };
-      await this.recordSuccess(fallbackResult);
-      
-      // Só depois remove do default se o fallback foi bem-sucedido
-      await this.state.default.remove(correlationId);
-    } catch (error) {
-      // Se falhar, mantém no default - melhor ter dados duplicados que perdidos
-    }
-  }
 
   async checkIfProcessed(correlationId) {
     try {
