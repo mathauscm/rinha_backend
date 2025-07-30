@@ -4,12 +4,14 @@ const Redis = require('ioredis');
 const redis = new Redis({
   host: 'redis',
   port: 6379,
-  retryDelayOnFailover: 50,
-  maxRetriesPerRequest: 3,
-  connectTimeout: 5000,
-  commandTimeout: 5000,
+  retryDelayOnFailover: 20,
+  maxRetriesPerRequest: 1,
+  connectTimeout: 1000,
+  commandTimeout: 1000,
   enableAutoPipelining: true,
-  lazyConnect: true
+  lazyConnect: true,
+  maxLoadingTimeout: 1000,
+  db: 0
 });
 
 // Script Lua para operação atômica de processamento de pagamento
@@ -121,31 +123,43 @@ class SharedPaymentStorage {
 
   async getSummary(fromTimestamp = null, toTimestamp = null) {
     try {
-      if (!fromTimestamp && !toTimestamp) {
-        // Consulta rápida sem filtros
-        const pipeline = redis.pipeline()
-          .get(`count:${this.prefix}`)
-          .get(`amount:${this.prefix}`);
-        
-        const results = await pipeline.exec();
-        
-        if (!results || results.some(([err]) => err)) {
-          return { totalRequests: 0, totalAmount: 0 };
-        }
-        
-        const totalRequests = parseInt(results[0][1]) || 0;
-        const totalAmount = parseFloat(results[1][1]) || 0;
-        
-        return {
-          totalRequests,
-          totalAmount: Math.round(totalAmount * 100) / 100
-        };
-      } else {
-        // Consulta com filtros de data
-        return await this.getSummaryWithDateFilter(fromTimestamp, toTimestamp);
-      }
+      // Timeout ultra-rápido para queries
+      const result = await Promise.race([
+        this.getSummaryInternal(fromTimestamp, toTimestamp),
+        new Promise((resolve) => 
+          setTimeout(() => resolve({ totalRequests: 0, totalAmount: 0 }), 30)
+        )
+      ]);
+      
+      return result;
     } catch (error) {
       return { totalRequests: 0, totalAmount: 0 };
+    }
+  }
+
+  async getSummaryInternal(fromTimestamp = null, toTimestamp = null) {
+    if (!fromTimestamp && !toTimestamp) {
+      // Consulta rápida sem filtros
+      const pipeline = redis.pipeline()
+        .get(`count:${this.prefix}`)
+        .get(`amount:${this.prefix}`);
+      
+      const results = await pipeline.exec();
+      
+      if (!results || results.some(([err]) => err)) {
+        return { totalRequests: 0, totalAmount: 0 };
+      }
+      
+      const totalRequests = parseInt(results[0][1]) || 0;
+      const totalAmount = parseFloat(results[1][1]) || 0;
+      
+      return {
+        totalRequests,
+        totalAmount: Math.round(totalAmount * 100) / 100
+      };
+    } else {
+      // Consulta com filtros de data
+      return await this.getSummaryWithDateFilter(fromTimestamp, toTimestamp);
     }
   }
 

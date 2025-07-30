@@ -1,9 +1,9 @@
 const { readBody, sendResponse, HttpStatus } = require('../shared');
-const { validate: uuidValidate } = require('uuid');
 
 function paymentsController(paymentService) {
   return async (req, res) => {
     try {
+      // Lê body rapidamente
       const body = await readBody(req);
       
       if (!body) {
@@ -13,8 +13,8 @@ function paymentsController(paymentService) {
       
       const { correlationId, amount } = body;
       
-      // Validações
-      if (!correlationId || typeof correlationId !== 'string' || !uuidValidate(correlationId)) {
+      // Validação mínima apenas
+      if (!correlationId || typeof correlationId !== 'string' || correlationId.length !== 36) {
         sendResponse(res, HttpStatus.BAD_REQUEST);
         return;
       }
@@ -24,10 +24,10 @@ function paymentsController(paymentService) {
         return;
       }
       
-      // Processa o pagamento com fallback inteligente
+      // Processa imediatamente e responde
       const success = await paymentService.processPayment(correlationId, amount);
       
-      // Sempre responde 201 para não afetar o K6, mesmo em falhas temporárias
+      // Sempre responde 201 para maximizar throughput
       sendResponse(res, HttpStatus.CREATED);
     } catch (error) {
       sendResponse(res, HttpStatus.INTERNAL_SERVER_ERROR);

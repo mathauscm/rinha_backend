@@ -25,6 +25,7 @@ function readBody(req) {
 function sendResponse(res, statusCode, data = null) {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Connection', 'keep-alive');
   
   if (data) {
     res.end(JSON.stringify(data));
