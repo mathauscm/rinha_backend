@@ -6,5 +6,5 @@
     "storages": ["redis"],
     "messaging": [],
     "load-balancers": ["nginx"],
-    "other-technologies": ["docker", "alpine", "uws", "undici", "msgpack", "lua"]
+    "other-technologies": ["docker", "alpine"]
 }

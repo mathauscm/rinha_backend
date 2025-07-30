@@ -12,8 +12,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.75"
-          memory: "175MB"
+          cpus: "0.675"
+          memory: "110MB"
     networks:
       - payment-processor
 
@@ -29,8 +29,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.75"
-          memory: "175MB"
+          cpus: "0.675"
+          memory: "110MB"
     networks:
       - payment-processor
 
@@ -74,3 +74,4 @@ services:
 networks:
   payment-processor:
     external: true
+    driver: bridge
