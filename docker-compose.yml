@@ -8,12 +8,12 @@ services:
       - redis
     environment:
       - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=32
+      - UV_THREADPOOL_SIZE=64
     deploy:
       resources:
         limits:
-          cpus: "0.675"
-          memory: "110MB"
+          cpus: "0.45"
+          memory: "80MB"
     networks:
       - payment-processor
 
@@ -25,12 +25,29 @@ services:
       - redis
     environment:
       - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=32
+      - UV_THREADPOOL_SIZE=64
     deploy:
       resources:
         limits:
-          cpus: "0.675"
-          memory: "110MB"
+          cpus: "0.45"
+          memory: "80MB"
+    networks:
+      - payment-processor
+
+  backend3:
+    build: .
+    ports:
+      - "10003:9999"
+    depends_on:
+      - redis
+    environment:
+      - NODE_ENV=production
+      - UV_THREADPOOL_SIZE=64
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "80MB"
     networks:
       - payment-processor
 
@@ -50,7 +67,7 @@ services:
       resources:
         limits:
           cpus: "0.05"
-          memory: "80MB"
+          memory: "70MB"
     networks:
       - payment-processor
 
@@ -63,11 +80,12 @@ services:
     depends_on:
       - backend1
       - backend2
+      - backend3
     deploy:
       resources:
         limits:
           cpus: "0.1"
-          memory: "50MB"
+          memory: "60MB"
     networks:
       - payment-processor
 

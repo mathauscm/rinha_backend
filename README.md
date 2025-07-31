@@ -11,8 +11,8 @@
 ## 🚀 Como Rodar
 
 ```bash
-git clone https://github.com/alan-venv/rinha-de-backend-2025
-cd rinha-de-backend-2025
+git clone https://github.com/mathauscm/rinha_backend
+cd rinha_backend
 docker compose up -d --build
 ```
 

@@ -2,9 +2,9 @@ const { Pool } = require('undici');
 const { redis } = require('../state/redisState');
 const { EventEmitter } = require('events');
 
-// HTTP pools otimizados para os Payment Processors
+// HTTP pools otimizados para os Payment Processors - INCREASED CONNECTIONS
 const defaultPool = new Pool('http://payment-processor-default:8080', {
-  connections: 20,
+  connections: 40, // DOUBLED for higher throughput
   pipelining: 1,
   keepAliveTimeout: 30000,
   keepAliveMaxTimeout: 30000,
@@ -13,7 +13,7 @@ const defaultPool = new Pool('http://payment-processor-default:8080', {
 });
 
 const fallbackPool = new Pool('http://payment-processor-fallback:8080', {
-  connections: 20,
+  connections: 40, // Same as default for fallback scenarios
   pipelining: 1,
   keepAliveTimeout: 30000,
   keepAliveMaxTimeout: 30000,
@@ -26,21 +26,27 @@ class PaymentService extends EventEmitter {
     super();
     this.state = state;
     
-    // Queue-based architecture inspired by Rust implementation
+    // SMART HEALTH-CHECK based strategy
     this.paymentQueue = [];
     this.isHealthy = false;
-    this.isProcessing = false;
-    this.workers = [];
-    this.TRIGGER_THRESHOLD = 50; // 50ms threshold like Rust TRIGGER
-    this.MAX_WORKERS = 4;
+    this.TRIGGER_THRESHOLD = 200; // Rust threshold
+    this.isShuttingDown = false;
+    this.processedCount = 0;
+    this.lastHealthCheck = 0;
+    this.healthCheckInterval = 5000; // 5 seconds as per instructions
+    this.currentMinResponseTime = 100; // Default
+    this.defaultProcessorFailing = false;
+    this.fallbackProcessorFailing = false;
+    this.processedIds = new Set(); // Avoid reprocessing same payments
+    this.processingIds = new Set(); // Track currently processing payments to avoid duplicates
     
-    // Initialize dispatcher and workers
-    this.initializeDispatcher();
-    this.initializeWorkers();
+    // Smart dispatcher with health checks
+    this.initializeSmartDispatcher();
+    this.setupGracefulShutdown();
   }
 
   async processPayment(correlationId, amount) {
-    // Queue-based approach: just submit to queue and return immediately
+    // Just queue it and return immediately like Rust
     const paymentData = {
       correlationId,
       amount,
@@ -51,89 +57,145 @@ class PaymentService extends EventEmitter {
     return true;
   }
 
-
-
-  initializeDispatcher() {
-    // Single dispatcher that processes queue when healthy=false or as fallback
+  initializeSmartDispatcher() {
+    // Ultra-fast simple dispatcher - back to basics
     setInterval(async () => {
-      if (this.paymentQueue.length > 0 && !this.isProcessing) {
-        const paymentData = this.paymentQueue.shift();
-        if (paymentData) {
-          await this.processPaymentSync(paymentData);
-        }
-      }
-    }, 10); // Very fast polling
-  }
-  
-  initializeWorkers() {
-    // Workers activate when healthy=true for parallel processing
-    for (let i = 0; i < this.MAX_WORKERS; i++) {
-      setInterval(async () => {
-        if (this.isHealthy && this.paymentQueue.length > 0) {
+      // Process queue with minimal overhead
+      if (this.paymentQueue.length > 0 && !this.isShuttingDown) {
+        // Simple batch processing without complex logic
+        const SIMPLE_BATCH = 16; // Larger batches for higher throughput
+        const promises = [];
+        
+        for (let i = 0; i < SIMPLE_BATCH && this.paymentQueue.length > 0; i++) {
           const paymentData = this.paymentQueue.shift();
           if (paymentData) {
-            const start = Date.now();
-            const success = await this.processPaymentSync(paymentData);
-            const duration = Date.now() - start;
-            
-            // If slow or failed, disable workers (back to dispatcher)
-            if (!success || duration > this.TRIGGER_THRESHOLD) {
-              this.isHealthy = false;
-            }
+            promises.push(this.processPaymentSync(paymentData));
           }
         }
-      }, 5); // Even faster for workers
-    }
+        
+        // Process batch in parallel using allSettled to avoid blocking
+        if (promises.length > 0) {
+          Promise.allSettled(promises); // Non-blocking, handles failures better
+        }
+      }
+    }, 2); // Faster interval for maximum throughput
+    
+    // Separate health check timer to avoid blocking
+    setInterval(async () => {
+      this.checkProcessorHealthAsync();
+    }, 5000); // Every 5 seconds, non-blocking
   }
   
-  async processPaymentSync(paymentData) {
-    const requestData = {
-      correlationId: paymentData.correlationId,
-      amount: paymentData.amount,
-      requestedAt: new Date(paymentData.timestamp).toISOString()
-    };
+  checkProcessorHealthAsync() {
+    // Check both default and fallback processors health
+    Promise.allSettled([
+      defaultPool.request({
+        path: '/payments/service-health',
+        method: 'GET'
+      }).then(async (response) => {
+        const healthData = await response.body.json();
+        this.defaultProcessorFailing = healthData.failing || false;
+        this.currentMinResponseTime = healthData.minResponseTime || 100;
+      }).catch(() => {
+        this.defaultProcessorFailing = true; // Mark as failing if health check fails
+      }),
+      
+      fallbackPool.request({
+        path: '/payments/service-health',
+        method: 'GET'
+      }).then(async (response) => {
+        const healthData = await response.body.json();
+        this.fallbackProcessorFailing = healthData.failing || false;
+      }).catch(() => {
+        this.fallbackProcessorFailing = true; // Mark as failing if health check fails
+      })
+    ]);
+  }
 
+  // Removed complex drain logic - using simple batching in dispatcher
+
+  async processPaymentSync(paymentData) {
+    const correlationId = paymentData.correlationId;
+    
+    // Avoid reprocessing same payments
+    if (this.processedIds.has(correlationId) || this.processingIds.has(correlationId)) {
+      return true; // Already processed or being processed
+    }
+    
+    // Mark as currently processing to prevent duplicates
+    this.processingIds.add(correlationId);
+    
+    try {
+      const requestData = {
+        correlationId: correlationId,
+        amount: paymentData.amount,
+        requestedAt: new Date(paymentData.timestamp).toISOString()
+      };
+
+      // Try default processor first
+      const defaultResult = await this.tryProcessor(defaultPool, requestData, 'default');
+      if (defaultResult) {
+        this.processedIds.add(correlationId);
+        this.processedCount++;
+        return true;
+      }
+      
+      // If default fails, try fallback processor
+      const fallbackResult = await this.tryProcessor(fallbackPool, requestData, 'fallback');
+      if (fallbackResult) {
+        this.processedIds.add(correlationId);
+        this.processedCount++;
+        return true;
+      }
+      
+      // Both processors failed - queue for retry
+      paymentData.retries = (paymentData.retries || 0) + 1;
+      if (paymentData.retries < 3) {
+        this.paymentQueue.unshift(paymentData);
+      }
+      
+      this.isHealthy = false;
+      return false;
+    } finally {
+      // Always remove from processing set when done
+      this.processingIds.delete(correlationId);
+    }
+  }
+
+  async tryProcessor(pool, requestData, processorType) {
     const start = Date.now();
     
     try {
-      const response = await Promise.race([
-        defaultPool.request({
-          path: '/payments',
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestData)
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 300))
-      ]);
+      const response = await pool.request({
+        path: '/payments',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestData)
+      });
 
       await response.body.text();
       
       if (response.statusCode === 200) {
         const duration = Date.now() - start;
         
-        // If fast, enable workers for parallel processing
+        // Health check exactly like Rust
         if (duration <= this.TRIGGER_THRESHOLD) {
           this.isHealthy = true;
-          // Drain queue to workers
-          this.emit('drain-queue');
         }
         
         await this.recordSuccess({
           ...requestData,
-          paymentProcessor: 'default'
+          paymentProcessor: processorType
         });
         
         return true;
       }
     } catch (error) {
-      // If failed, put back in queue for retry
-      this.paymentQueue.unshift(paymentData);
-      this.isHealthy = false;
+      return false;
     }
     
     return false;
   }
-
 
   getQueueSize() {
     return this.paymentQueue.length;
@@ -141,6 +203,10 @@ class PaymentService extends EventEmitter {
   
   isSystemHealthy() {
     return this.isHealthy;
+  }
+  
+  getProcessedCount() {
+    return this.processedCount;
   }
 
   async recordSuccess(result) {
@@ -154,42 +220,39 @@ class PaymentService extends EventEmitter {
     }
   }
 
-  async getHealthStatus(processor) {
-    const now = Date.now();
-    const cache = processor === 'default' ? this.defaultHealthCache : this.fallbackHealthCache;
+  setupGracefulShutdown() {
+    const shutdownHandler = async () => {
+      console.log('PaymentService: Starting graceful shutdown...');
+      this.isShuttingDown = true;
+      await this.flushQueue();
+      console.log(`PaymentService: Shutdown complete. Final queue size: ${this.paymentQueue.length}`);
+    };
     
-    // Usa cache se ainda válido (respeitando limite de 5s)
-    if ((now - cache.lastCheck) < this.HEALTH_CACHE_TTL) {
-      return cache;
-    }
-
-    try {
-      const pool = processor === 'default' ? defaultPool : fallbackPool;
-      const response = await Promise.race([
-        pool.request({
-          path: '/payments/service-health',
-          method: 'GET'
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), 1000))
-      ]);
-
-      const body = await response.body.json();
-      
-      if (response.statusCode === 200) {
-        cache.failing = body.failing || false;
-        cache.minResponseTime = body.minResponseTime || 100;
-        cache.lastCheck = now;
-      }
-    } catch (error) {
-      // Se health-check falhou, assume que está funcionando (fallback conservador)
-      cache.failing = false;
-      cache.minResponseTime = 100;
-      cache.lastCheck = now;
-    }
-
-    return cache;
+    process.on('SIGINT', shutdownHandler);
+    process.on('SIGTERM', shutdownHandler);
+    process.on('exit', shutdownHandler);
   }
-
+  
+  async flushQueue() {
+    console.log(`PaymentService: Flushing queue with ${this.paymentQueue.length} pending payments...`);
+    
+    const startTime = Date.now();
+    const MAX_FLUSH_TIME = 5000;
+    
+    while (this.paymentQueue.length > 0 && (Date.now() - startTime) < MAX_FLUSH_TIME) {
+      const paymentData = this.paymentQueue.shift();
+      if (paymentData) {
+        await this.processPaymentSync(paymentData);
+      }
+    }
+    
+    const remainingItems = this.paymentQueue.length;
+    if (remainingItems > 0) {
+      console.warn(`PaymentService: ${remainingItems} payments could not be flushed within timeout`);
+    } else {
+      console.log('PaymentService: All payments flushed successfully');
+    }
+  }
 }
 
 module.exports = { PaymentService };

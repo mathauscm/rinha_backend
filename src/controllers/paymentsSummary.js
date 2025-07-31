@@ -25,9 +25,20 @@ async function paymentSummaryService(state, from, to) {
   const defaultSummary = await state.default.getSummary(fromTimestamp, toTimestamp);
   const fallbackSummary = await state.fallback.getSummary(fromTimestamp, toTimestamp);
   
+  // Add queue monitoring info
+  const queueSize = global.paymentService ? global.paymentService.getQueueSize() : 0;
+  const isHealthy = global.paymentService ? global.paymentService.isSystemHealthy() : false;
+  const processedCount = global.paymentService ? global.paymentService.getProcessedCount() : 0;
+  
   return {
     default: defaultSummary,
-    fallback: fallbackSummary
+    fallback: fallbackSummary,
+    system: {
+      queueSize,
+      isHealthy,
+      processedCount,
+      timestamp: Date.now()
+    }
   };
 }
 
