@@ -14,7 +14,7 @@ function startServer(port, paymentService, state) {
     } else if (req.method === 'GET' && req.url?.startsWith('/payments-summary')) {
       summaryHandler(req, res);
     } else if (req.method === 'POST' && req.url === '/purge-payments') {
-      // Reset Redis state - usado pelo K6 para limpeza entre testes
+      // Reseta estado do Redis - usado pelo K6 para limpeza entre testes
       purgeHandler(req, res, state);
     } else {
       sendResponse(res, HttpStatus.NOT_FOUND);

@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 9999;
 // ESTRATÉGIA FINAL: Redis + lógica perfeita
 const paymentService = new PaymentService(sharedState);
 
-// Make paymentService globally accessible for monitoring
+// Torna o paymentService globalmente acessível para monitoramento
 global.paymentService = paymentService;
 
 startServer(PORT, paymentService, sharedState);

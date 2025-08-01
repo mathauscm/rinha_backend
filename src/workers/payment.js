@@ -106,7 +106,7 @@ async function processPayment(data) {
   try {
     return await processWithDefault(data);
   } catch {
-    // Use fallback a cada 10 falhas do default
+    // Usa fallback a cada 10 falhas do default
     if (reqCount % 10 === 0) {
       try {
         return await processWithFallback(data);

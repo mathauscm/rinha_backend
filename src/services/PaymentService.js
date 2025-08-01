@@ -2,9 +2,9 @@ const { Pool } = require('undici');
 const { redis } = require('../state/redisState');
 const { EventEmitter } = require('events');
 
-// HTTP pools otimizados para os Payment Processors - INCREASED CONNECTIONS
+// HTTP pools otimizados para os Payment Processors - CONEXÕES AUMENTADAS
 const defaultPool = new Pool('http://payment-processor-default:8080', {
-  connections: 40, // DOUBLED for higher throughput
+  connections: 40, // DOBRADAS para maior throughput
   pipelining: 1,
   keepAliveTimeout: 30000,
   keepAliveMaxTimeout: 30000,
@@ -13,7 +13,7 @@ const defaultPool = new Pool('http://payment-processor-default:8080', {
 });
 
 const fallbackPool = new Pool('http://payment-processor-fallback:8080', {
-  connections: 40, // Same as default for fallback scenarios
+  connections: 40, // Mesmo valor do padrão para cenários de fallback
   pipelining: 1,
   keepAliveTimeout: 30000,
   keepAliveMaxTimeout: 30000,
@@ -26,27 +26,27 @@ class PaymentService extends EventEmitter {
     super();
     this.state = state;
     
-    // SMART HEALTH-CHECK based strategy
+    // Estratégia baseada em HEALTH-CHECK inteligente
     this.paymentQueue = [];
     this.isHealthy = false;
-    this.TRIGGER_THRESHOLD = 200; // Rust threshold
+    this.TRIGGER_THRESHOLD = 200; // Limite do Rust
     this.isShuttingDown = false;
     this.processedCount = 0;
     this.lastHealthCheck = 0;
     this.healthCheckInterval = 5000; // 5 seconds as per instructions
-    this.currentMinResponseTime = 100; // Default
+    this.currentMinResponseTime = 100; // Padrão
     this.defaultProcessorFailing = false;
     this.fallbackProcessorFailing = false;
-    this.processedIds = new Set(); // Avoid reprocessing same payments
-    this.processingIds = new Set(); // Track currently processing payments to avoid duplicates
+    this.processedIds = new Set(); // Evita reprocessar os mesmos pagamentos
+    this.processingIds = new Set(); // Rastreia pagamentos em processamento para evitar duplicatas
     
-    // Smart dispatcher with health checks
+    // Dispatcher inteligente com verificações de saúde
     this.initializeSmartDispatcher();
     this.setupGracefulShutdown();
   }
 
   async processPayment(correlationId, amount) {
-    // Just queue it and return immediately like Rust
+    // Apenas enfileira e retorna imediatamente como o Rust
     const paymentData = {
       correlationId,
       amount,
@@ -58,12 +58,12 @@ class PaymentService extends EventEmitter {
   }
 
   initializeSmartDispatcher() {
-    // Ultra-fast simple dispatcher - back to basics
+    // Dispatcher simples ultra-rápido - voltando ao básico
     setInterval(async () => {
-      // Process queue with minimal overhead
+      // Processa fila com overhead mínimo
       if (this.paymentQueue.length > 0 && !this.isShuttingDown) {
-        // Simple batch processing without complex logic
-        const SIMPLE_BATCH = 16; // Larger batches for higher throughput
+        // Processamento em lote simples sem lógica complexa
+        const SIMPLE_BATCH = 16; // Lotes maiores para maior throughput
         const promises = [];
         
         for (let i = 0; i < SIMPLE_BATCH && this.paymentQueue.length > 0; i++) {
@@ -73,21 +73,21 @@ class PaymentService extends EventEmitter {
           }
         }
         
-        // Process batch in parallel using allSettled to avoid blocking
+        // Processa lote em paralelo usando allSettled para evitar bloqueio
         if (promises.length > 0) {
-          Promise.allSettled(promises); // Non-blocking, handles failures better
+          Promise.allSettled(promises); // Não-bloqueante, lida melhor com falhas
         }
       }
-    }, 2); // Faster interval for maximum throughput
+    }, 2); // Intervalo mais rápido para throughput máximo
     
-    // Separate health check timer to avoid blocking
+    // Timer separado de verificação de saúde para evitar bloqueio
     setInterval(async () => {
       this.checkProcessorHealthAsync();
-    }, 5000); // Every 5 seconds, non-blocking
+    }, 5000); // A cada 5 segundos, não-bloqueante
   }
   
   checkProcessorHealthAsync() {
-    // Check both default and fallback processors health
+    // Verifica a saúde dos processadores padrão e fallback
     Promise.allSettled([
       defaultPool.request({
         path: '/payments/service-health',
@@ -97,7 +97,7 @@ class PaymentService extends EventEmitter {
         this.defaultProcessorFailing = healthData.failing || false;
         this.currentMinResponseTime = healthData.minResponseTime || 100;
       }).catch(() => {
-        this.defaultProcessorFailing = true; // Mark as failing if health check fails
+        this.defaultProcessorFailing = true; // Marca como falhando se o health check falhar
       }),
       
       fallbackPool.request({
@@ -107,22 +107,22 @@ class PaymentService extends EventEmitter {
         const healthData = await response.body.json();
         this.fallbackProcessorFailing = healthData.failing || false;
       }).catch(() => {
-        this.fallbackProcessorFailing = true; // Mark as failing if health check fails
+        this.fallbackProcessorFailing = true; // Marca como falhando se o health check falhar
       })
     ]);
   }
 
-  // Removed complex drain logic - using simple batching in dispatcher
+  // Removida lógica complexa de drain - usando lote simples no dispatcher
 
   async processPaymentSync(paymentData) {
     const correlationId = paymentData.correlationId;
     
-    // Avoid reprocessing same payments
+    // Evita reprocessar os mesmos pagamentos
     if (this.processedIds.has(correlationId) || this.processingIds.has(correlationId)) {
-      return true; // Already processed or being processed
+      return true; // Já processado ou sendo processado
     }
     
-    // Mark as currently processing to prevent duplicates
+    // Marca como processando atualmente para prevenir duplicatas
     this.processingIds.add(correlationId);
     
     try {
@@ -132,7 +132,7 @@ class PaymentService extends EventEmitter {
         requestedAt: new Date(paymentData.timestamp).toISOString()
       };
 
-      // Try default processor first
+      // Tenta processador padrão primeiro
       const defaultResult = await this.tryProcessor(defaultPool, requestData, 'default');
       if (defaultResult) {
         this.processedIds.add(correlationId);
@@ -140,7 +140,7 @@ class PaymentService extends EventEmitter {
         return true;
       }
       
-      // If default fails, try fallback processor
+      // Se o padrão falhar, tenta processador fallback
       const fallbackResult = await this.tryProcessor(fallbackPool, requestData, 'fallback');
       if (fallbackResult) {
         this.processedIds.add(correlationId);
@@ -148,7 +148,7 @@ class PaymentService extends EventEmitter {
         return true;
       }
       
-      // Both processors failed - queue for retry
+      // Ambos processadores falharam - enfileira para retry
       paymentData.retries = (paymentData.retries || 0) + 1;
       if (paymentData.retries < 3) {
         this.paymentQueue.unshift(paymentData);
@@ -157,7 +157,7 @@ class PaymentService extends EventEmitter {
       this.isHealthy = false;
       return false;
     } finally {
-      // Always remove from processing set when done
+      // Sempre remove do conjunto de processamento quando terminar
       this.processingIds.delete(correlationId);
     }
   }
@@ -181,7 +181,7 @@ class PaymentService extends EventEmitter {
       if (response.statusCode === 200) {
         const duration = Date.now() - start;
         
-        // Health check exactly like Rust
+        // Health check exatamente como o Rust
         if (duration <= this.TRIGGER_THRESHOLD) {
           this.isHealthy = true;
         }
