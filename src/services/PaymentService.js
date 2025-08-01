@@ -169,7 +169,10 @@ class PaymentService extends EventEmitter {
       const response = await pool.request({
         path: '/payments',
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Rinha-Token': '123'
+        },
         body: JSON.stringify(requestData)
       });
 
