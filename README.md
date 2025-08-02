@@ -1,7 +1,5 @@
 # 🚀 Rinha Backend 2025
 
-# Sistema de Processamento de Pagamentos 
-
 ## 🛠️ Tecnologias Utilizadas 👨‍💻
 
 * **Node** 
