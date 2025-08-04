@@ -2,52 +2,35 @@ version: "3.9"
 services:
   backend1:
     build: .
-    ports:
-      - "10001:9999"
+    hostname: backend1
     depends_on:
       - redis
     environment:
       - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=64
+      - UV_THREADPOOL_SIZE=32
+      - PORT=9999
     deploy:
       resources:
         limits:
-          cpus: "0.45"
-          memory: "80MB"
+          cpus: "0.6"
+          memory: "140MB"
     networks:
       - payment-processor
 
   backend2:
     build: .
-    ports:
-      - "10002:9999"
+    hostname: backend2
     depends_on:
       - redis
     environment:
       - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=64
+      - UV_THREADPOOL_SIZE=32
+      - PORT=9999
     deploy:
       resources:
         limits:
-          cpus: "0.45"
-          memory: "80MB"
-    networks:
-      - payment-processor
-
-  backend3:
-    build: .
-    ports:
-      - "10003:9999"
-    depends_on:
-      - redis
-    environment:
-      - NODE_ENV=production
-      - UV_THREADPOOL_SIZE=64
-    deploy:
-      resources:
-        limits:
-          cpus: "0.45"
-          memory: "80MB"
+          cpus: "0.6"
+          memory: "140MB"
     networks:
       - payment-processor
 
@@ -58,16 +41,18 @@ services:
       "redis-server",
       "--appendonly", "no",
       "--save", "",
-      "--maxmemory", "80mb",
+      "--maxmemory", "40mb",
       "--maxmemory-policy", "allkeys-lru",
       "--tcp-keepalive", "60",
-      "--timeout", "0"
+      "--timeout", "0",
+      "--tcp-backlog", "511",
+      "--databases", "1"
     ]
     deploy:
       resources:
         limits:
-          cpus: "0.05"
-          memory: "70MB"
+          cpus: "0.15"
+          memory: "45MB"
     networks:
       - payment-processor
 
@@ -80,12 +65,11 @@ services:
     depends_on:
       - backend1
       - backend2
-      - backend3
     deploy:
       resources:
         limits:
-          cpus: "0.1"
-          memory: "60MB"
+          cpus: "0.15"
+          memory: "25MB"
     networks:
       - payment-processor
 

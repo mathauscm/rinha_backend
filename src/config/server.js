@@ -1,8 +1,8 @@
 const http = require('http');
+const fs = require('fs');
 const { sendResponse, HttpStatus } = require('../shared');
 const { paymentsController } = require('../controllers/payments');
 const { paymentsSummaryController } = require('../controllers/paymentsSummary');
-const { redis } = require('../state/redisState');
 
 function startServer(port, paymentService, state) {
   const paymentsHandler = paymentsController(paymentService);
@@ -13,6 +13,8 @@ function startServer(port, paymentService, state) {
       paymentsHandler(req, res);
     } else if (req.method === 'GET' && req.url?.startsWith('/payments-summary')) {
       summaryHandler(req, res);
+    } else if (req.method === 'GET' && req.url === '/health') {
+      healthHandler(req, res, paymentService);
     } else if (req.method === 'POST' && req.url === '/purge-payments') {
       // Reset Redis state - usado pelo K6 para limpeza entre testes
       purgeHandler(req, res, state);
@@ -28,10 +30,23 @@ function startServer(port, paymentService, state) {
   return server;
 }
 
+function healthHandler(req, res, paymentService) {
+  const queueSize = paymentService.getQueueSize();
+  const processedCount = paymentService.getProcessedCount();
+  
+  sendResponse(res, HttpStatus.OK, {
+    status: "healthy",
+    queueSize,
+    processedCount,
+    uptime: process.uptime()
+  });
+}
+
 async function purgeHandler(req, res, state) {
   try {
-    await redis.flushall();
-    console.log('Redis purged - all payment data cleared');
+    state.default.clear();
+    state.fallback.clear();
+    console.log('In-memory storage purged - all payment data cleared');
     sendResponse(res, HttpStatus.OK, { message: 'Database purged successfully' });
   } catch (error) {
     console.error('Error purging database:', error);

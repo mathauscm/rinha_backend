@@ -1,17 +1,19 @@
 const Redis = require('ioredis');
 
-// Redis otimizado com scripts Lua para atomicidade
+// Redis ultra-otimizado para latência mínima
 const redis = new Redis({
   host: 'redis',
   port: 6379,
-  retryDelayOnFailover: 20,
-  maxRetriesPerRequest: 1,
-  connectTimeout: 500,
-  commandTimeout: 500,
+  retryDelayOnFailover: 1,
+  maxRetriesPerRequest: 0,
+  connectTimeout: 100,
+  commandTimeout: 50,
   enableAutoPipelining: true,
   lazyConnect: true,
-  maxLoadingTimeout: 1000,
-  db: 0
+  maxLoadingTimeout: 50,
+  db: 0,
+  keepAlive: 10000,
+  family: 4
 });
 
 // Script Lua simples para operação atômica de processamento de pagamento
@@ -127,7 +129,7 @@ class SharedPaymentStorage {
       const result = await Promise.race([
         this.getSummaryInternal(fromTimestamp, toTimestamp),
         new Promise((resolve) => 
-          setTimeout(() => resolve({ totalRequests: 0, totalAmount: 0 }), 10)
+          setTimeout(() => resolve({ totalRequests: 0, totalAmount: 0 }), 100)
         )
       ]);
       
@@ -155,7 +157,7 @@ class SharedPaymentStorage {
       
       return {
         totalRequests,
-        totalAmount: Math.round(totalAmount * 100) / 100
+        totalAmount: Math.round(totalAmount) / 100  // Convert cents to float
       };
     } else {
       // Consulta com filtros de data
@@ -184,7 +186,7 @@ class SharedPaymentStorage {
       
       return {
         totalRequests,
-        totalAmount: Math.round((totalAmount / 100) * 100) / 100
+        totalAmount: totalAmount / 100  // Convert cents to float
       };
     } catch (error) {
       return { totalRequests: 0, totalAmount: 0 };

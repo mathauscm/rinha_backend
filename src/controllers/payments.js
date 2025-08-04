@@ -25,7 +25,7 @@ function paymentsController(paymentService) {
       }
       
       // Processa imediatamente e responde
-      const success = await paymentService.processPayment(correlationId, amount);
+      await paymentService.processPayment(correlationId, amount);
       
       // Sempre responde 201 para maximizar throughput
       sendResponse(res, HttpStatus.CREATED);
