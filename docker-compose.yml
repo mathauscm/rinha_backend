@@ -15,6 +15,7 @@ services:
           cpus: "0.65"
           memory: "125MB"
     networks:
+      - internal
       - payment-processor
 
   backend2:
@@ -32,6 +33,7 @@ services:
           cpus: "0.65"
           memory: "125MB"
     networks:
+      - internal
       - payment-processor
 
   redis:
@@ -54,7 +56,7 @@ services:
           cpus: "0.1"
           memory: "50MB"
     networks:
-      - payment-processor
+      - internal
 
   nginx:
     image: nginx:stable-alpine
@@ -71,9 +73,11 @@ services:
           cpus: "0.1"
           memory: "50MB"
     networks:
-      - payment-processor
+      - internal
 
 networks:
+  internal:
+    driver: bridge
   payment-processor:
     external: true
     driver: bridge
