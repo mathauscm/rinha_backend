@@ -58,19 +58,19 @@ class PaymentService {
       requestedAt: new Date(paymentData.timestamp).toISOString()
     };
 
-    // Try default first
+    // Tenta default primeiro
     if (await this.tryProcessor(defaultPool, requestBody, 'default')) {
       this.processedCount++;
       return true;
     }
 
-    // Try fallback
+    // Tenta fallback
     if (await this.tryProcessor(fallbackPool, requestBody, 'fallback')) {
       this.processedCount++;
       return true;
     }
 
-    // Retry once
+    // Tenta novamente uma vez
     this.queue.unshift(paymentData);
     return false;
   }
@@ -87,9 +87,9 @@ class PaymentService {
       await response.body.text();
 
       if (response.statusCode === 200) {
-        // Record in state
+        // Registra no estado
         const success = await this.state[processorType].push(
-          Math.round(requestData.amount * 100), // cents
+          Math.round(requestData.amount * 100), // centavos
           new Date(requestData.requestedAt).getTime(),
           requestData.correlationId
         );
@@ -97,7 +97,7 @@ class PaymentService {
         return true;
       }
     } catch (error) {
-      // Silent fail for performance
+      // Falha silenciosa para performance
     }
     
     return false;
