@@ -31,15 +31,20 @@ function startServer(port, paymentService, state) {
 }
 
 function healthHandler(req, res, paymentService) {
-  const queueSize = paymentService.getQueueSize();
-  const processedCount = paymentService.getProcessedCount();
-  
-  sendResponse(res, HttpStatus.OK, {
-    status: "healthy",
-    queueSize,
-    processedCount,
-    uptime: process.uptime()
-  });
+  try {
+    const health = {
+      status: 'healthy',
+      queueSize: paymentService.getQueueSize(),
+      processedCount: paymentService.getProcessedCount(),
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      timestamp: new Date().toISOString()
+    };
+    
+    sendResponse(res, HttpStatus.OK, health);
+  } catch (error) {
+    sendResponse(res, HttpStatus.INTERNAL_SERVER_ERROR, { status: 'unhealthy', error: error.message });
+  }
 }
 
 async function purgeHandler(req, res, state) {

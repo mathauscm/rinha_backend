@@ -12,8 +12,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.6"
-          memory: "140MB"
+          cpus: "0.65"
+          memory: "125MB"
     networks:
       - payment-processor
 
@@ -29,8 +29,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.6"
-          memory: "140MB"
+          cpus: "0.65"
+          memory: "125MB"
     networks:
       - payment-processor
 
@@ -41,8 +41,8 @@ services:
       "redis-server",
       "--appendonly", "no",
       "--save", "",
-      "--maxmemory", "40mb",
-      "--maxmemory-policy", "allkeys-lru",
+      "--maxmemory", "45mb",
+      "--maxmemory-policy", "noeviction",
       "--tcp-keepalive", "60",
       "--timeout", "0",
       "--tcp-backlog", "511",
@@ -51,8 +51,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.15"
-          memory: "45MB"
+          cpus: "0.1"
+          memory: "50MB"
     networks:
       - payment-processor
 
@@ -68,8 +68,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.15"
-          memory: "25MB"
+          cpus: "0.1"
+          memory: "50MB"
     networks:
       - payment-processor
 

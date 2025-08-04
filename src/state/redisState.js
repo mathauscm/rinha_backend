@@ -5,12 +5,12 @@ const redis = new Redis({
   host: 'redis',
   port: 6379,
   retryDelayOnFailover: 1,
-  maxRetriesPerRequest: 0,
-  connectTimeout: 100,
-  commandTimeout: 50,
+  maxRetriesPerRequest: 3,
+  connectTimeout: 200,
+  commandTimeout: 100,
   enableAutoPipelining: true,
   lazyConnect: true,
-  maxLoadingTimeout: 50,
+  maxLoadingTimeout: 100,
   db: 0,
   keepAlive: 10000,
   family: 4
@@ -129,7 +129,7 @@ class SharedPaymentStorage {
       const result = await Promise.race([
         this.getSummaryInternal(fromTimestamp, toTimestamp),
         new Promise((resolve) => 
-          setTimeout(() => resolve({ totalRequests: 0, totalAmount: 0 }), 100)
+          setTimeout(() => resolve({ totalRequests: 0, totalAmount: 0 }), 200)
         )
       ]);
       

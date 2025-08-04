@@ -30,4 +30,4 @@ USER nodejs
 
 # Use tini para signal handling
 ENTRYPOINT ["tini", "--"]
-CMD ["npm", "start"]
+CMD ["node", "src/main.js"]
