@@ -1,6 +1,6 @@
 {
     "name": "Mathaus Carvalho",
-    "social": ["https://www.linkedin.com/in/mathauscarvalho/"],
+    "social": ["https://www.linkedin.com/in/mathauscarvalho/", "https://mathaus.dev/"],
     "source-code-repo": "https://github.com/mathauscm/rinha_backend",
     "langs": ["node"],
     "storages": ["redis"],
