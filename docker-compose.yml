@@ -1,7 +1,7 @@
 version: "3.9"
 services:
   backend1:
-    build: .
+    image: mathauscm/rinha-backend:latest
     hostname: backend1
     depends_on:
       - redis
@@ -18,7 +18,7 @@ services:
       - payment-processor
 
   backend2:
-    build: .
+    image: mathauscm/rinha-backend:latest
     hostname: backend2
     depends_on:
       - redis
